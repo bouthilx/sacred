@@ -307,7 +307,7 @@ class Ingredient(object):
             base_dir=self.base_dir,
             sources=[s.to_json(self.base_dir) for s in sorted(sources)],
             dependencies=[d.to_json() for d in sorted(dependencies)],
-            repositories=collect_repositories(sources),
+            repositories=collect_repositories(sources | dependencies),
             mainfile=mainfile
         )
 
