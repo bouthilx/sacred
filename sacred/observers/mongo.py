@@ -132,12 +132,16 @@ class MongoObserver(RunObserver):
         self.insert()
         return self.run_entry['_id']
 
-    def heartbeat_event(self, info, captured_out, beat_time, result):
+    def wrapup_event(self, info, captured_out, result):
         self.run_entry['info'] = flatten(info)
         self.run_entry['captured_out'] = captured_out
-        self.run_entry['heartbeat'] = beat_time
         self.run_entry['result'] = flatten(result)
-        self.save()
+        self.update(info=flatten(info), captured_out=captured_out,
+                    result=result)
+
+    def heartbeat_event(self, info, captured_out, beat_time, result):
+        self.run_entry['heartbeat'] = beat_time
+        self.update(heartbeat=beat_time)
 
     def completed_event(self, stop_time, result):
         self.run_entry['stop_time'] = stop_time
@@ -228,6 +232,19 @@ class MongoObserver(RunObserver):
                 if not autoinc_key:
                     raise
             return
+
+    def update(self, **kwargs):
+        import pymongo.errors
+
+        try:
+            self.runs.update_one({'_id': self.run_entry['_id']},
+                                 {"$set": kwargs},
+                                 upsert=False)
+        except pymongo.errors.AutoReconnect:
+            pass  # just wait for the next save
+        except pymongo.errors.InvalidDocument:
+            raise ObserverError('Run contained an unserializable entry.'
+                                '(most likely in the info)')
 
     def save(self):
         import pymongo.errors

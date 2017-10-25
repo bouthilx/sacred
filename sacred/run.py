@@ -88,7 +88,7 @@ class Run(object):
         self.meta_info = {}
         """A custom comment for this run"""
 
-        self.beat_interval = 600.0  # sec
+        self.beat_interval = 30 * 60.0  # sec
         """The time between two heartbeat events measured in seconds"""
 
         self.unobserved = False
@@ -236,15 +236,18 @@ class Run(object):
             finally:
                 self._get_captured_output()
             self._stop_heartbeat()
+            self._emit_wrap_up()
             self._emit_completed(self.result)
         except (SacredInterrupt, KeyboardInterrupt) as e:
             self._stop_heartbeat()
+            self._emit_wrap_up()
             status = getattr(e, 'STATUS', 'INTERRUPTED')
             self._emit_interrupted(status)
             raise
         except:
             exc_type, exc_value, trace = sys.exc_info()
             self._stop_heartbeat()
+            self._emit_wrap_up()
             self._emit_failed(exc_type, exc_value, trace.tb_next)
             raise
         finally:
@@ -348,6 +351,14 @@ class Run(object):
                             info=self.info,
                             captured_out=self.captured_out,
                             beat_time=beat_time,
+                            result=self.result)
+
+    def _emit_wrap_up(self):
+        self._get_captured_output()
+        for observer in self.observers:
+            self._safe_call(observer, 'wrapup_event',
+                            info=self.info,
+                            captured_out=self.captured_out,
                             result=self.result)
 
     def _stop_time(self):
