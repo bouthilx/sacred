@@ -110,6 +110,8 @@ class Run(object):
         """Determines the way the stdout/stderr are captured"""
 
         self._heartbeat = None
+        self._current_start_time = None
+        self._previous_duration = None
         self._failed_observers = []
         self._output_file = None
 
@@ -311,9 +313,17 @@ class Run(object):
         else:
             self.run_logger.info('Queued-up run with ID "{}"'.format(self._id))
 
+    @property
+    def duration(self):
+        now = datetime.datetime.utcnow()
+        current_duration = (now - self._current_start_time)
+        return self._previous_duration + current_duration
+
     def _emit_started(self):
         self.status = 'RUNNING'
         self.start_time = datetime.datetime.utcnow()
+        self._current_start_time = datetime.datetime.utcnow()
+        self._previous_duration = datetime.timedelta(seconds=0.)
         command = join_paths(self.main_function.prefix,
                              self.main_function.signature.name)
         self.run_logger.info("Running command '%s'", command)
@@ -330,6 +340,10 @@ class Run(object):
                 )
                 if self._id is None:
                     self._id = _id
+                if hasattr(observer, 'run_entry'):
+                    self._previous_duration = datetime.timedelta(
+                        seconds=observer.run_entry.get("duration", 0))
+                    self.start_time = observer.run_entry["start_time"]
                 # do not catch any exceptions on startup:
                 # the experiment SHOULD fail if any of the observers fails
         if self._id is None:
@@ -349,6 +363,7 @@ class Run(object):
                             info=self.info)
             self._safe_call(observer, 'heartbeat_event',
                             info=self.info,
+                            duration=self.duration.total_seconds(),
                             captured_out=self.captured_out,
                             beat_time=beat_time,
                             result=self.result)
@@ -460,4 +475,5 @@ class Run(object):
         # The same as Experiment.log_scalar (if something changes,
         # update the docstring too!)
 
-        return self._metrics.log_scalar_metric(metric_name, value, step)
+        return self._metrics.log_scalar_metric(metric_name, value,
+                                               self.duration, step)

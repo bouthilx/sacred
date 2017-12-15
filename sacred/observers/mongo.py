@@ -2,9 +2,10 @@
 # coding=utf-8
 from __future__ import division, print_function, unicode_literals
 
+import copy
+import os.path
 import pickle
 import re
-import os.path
 import sys
 import time
 
@@ -111,19 +112,24 @@ class MongoObserver(RunObserver):
                 raise RuntimeError("Sources don't match")
             self.run_entry = self.overwrite
 
+        for key, value in ({
+                'experiment': dict(ex_info),
+                'format': self.VERSION,
+                'command': command,
+                'host': dict(host_info),
+                'start_time': start_time,
+                'config': flatten(config),
+                'meta': meta_info,
+                'resources': [],
+                'artifacts': [],
+                'captured_out': '',
+                'info': {},
+                'metrics': {}
+                }).iteritems():
+            self.run_entry.setdefault(key, value)
+
         self.run_entry.update({
-            'experiment': dict(ex_info),
-            'format': self.VERSION,
-            'command': command,
-            'host': dict(host_info),
-            'start_time': start_time,
-            'config': flatten(config),
-            'meta': meta_info,
             'status': 'RUNNING',
-            'resources': [],
-            'artifacts': [],
-            'captured_out': '',
-            'info': {},
             'heartbeat': None
         })
 
@@ -139,9 +145,10 @@ class MongoObserver(RunObserver):
         self.update(info=flatten(info), captured_out=captured_out,
                     result=result)
 
-    def heartbeat_event(self, info, captured_out, beat_time, result):
+    def heartbeat_event(self, info, duration, captured_out, beat_time, result):
         self.run_entry['heartbeat'] = beat_time
-        self.update(heartbeat=beat_time)
+        self.run_entry['duration'] = duration
+        self.update(heartbeat=beat_time, duration=duration)
 
     def completed_event(self, stop_time, result):
         self.run_entry['stop_time'] = stop_time
@@ -193,23 +200,60 @@ class MongoObserver(RunObserver):
         Additionally, reference the metrics
         in the info["metrics"] dictionary.
         """
-        if self.metrics is None:
-            # If, for whatever reason, the metrics collection has not been set
-            # do not try to save there anything
-            return
-        for key in metrics_by_name:
-            query = {"run_id": self.run_entry['_id'],
-                     "name": key}
-            push = {"steps": {"$each": metrics_by_name[key]["steps"]},
-                    "values": {"$each": metrics_by_name[key]["values"]},
-                    "timestamps": {"$each": metrics_by_name[key]["timestamps"]}
-                    }
-            update = {"$push": push}
-            result = self.metrics.update_one(query, update, upsert=True)
-            if result.upserted_id is not None:
-                # This is the first time we are storing this metric
-                info.setdefault("metrics", []) \
-                    .append({"name": key, "id": str(result.upserted_id)})
+        query = {"_id": self.run_entry['_id']}
+
+        tmp_run_metrics = copy.deepcopy(self.run_entry["metrics"])
+
+        def initialize(metrics, metric_name):
+            if metric_name not in metrics:
+                metrics[metric_name] = dict(
+                    steps=[], values=[], timestamps=[])
+
+        push = {}
+
+        for metric_name in metrics_by_name:
+            if "." in metric_name:
+                raise ValueError("Invalid name. Metric names cannot contain "
+                                 "dots (.): %s" % metric_name)
+
+            values_label = "metrics.%s.values" % metric_name
+            steps_label = "metrics.%s.steps" % metric_name
+            timestamps_label = "metrics.%s.timestamps" % metric_name
+
+            timestamps = [timedelta.total_seconds() for timedelta in 
+                          metrics_by_name[metric_name]["timestamps"]]
+
+            push[steps_label] = {
+                "$each": metrics_by_name[metric_name]["steps"]}
+            push[values_label] = {
+                "$each": metrics_by_name[metric_name]["values"]}
+            push[timestamps_label] = {
+                "$each": timestamps}
+
+            initialize(tmp_run_metrics, metric_name)
+            tmp_run_metrics[metric_name]["steps"] += (
+                metrics_by_name[metric_name]["steps"])
+            tmp_run_metrics[metric_name]["values"] += (
+                metrics_by_name[metric_name]["values"])
+            tmp_run_metrics[metric_name]["timestamps"] += (
+                timestamps)
+
+        update = {}
+
+        if push:
+            update["$push"] = push
+        if update:
+            result = self.runs.update_one(query, update, upsert=False)
+            if result.acknowledged:
+                self.run_entry["metrics"] = tmp_run_metrics
+
+            return result.acknowledged
+
+            # result = self.metrics.update_one(query, update, upsert=True)
+            # if result.upserted_id is not None:
+            #     # This is the first time we are storing this metric
+            #     info.setdefault("metrics", []) \
+            #         .append({"name": key, "id": str(result.upserted_id)})
 
     def insert(self):
         import pymongo.errors

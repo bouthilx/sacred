@@ -25,7 +25,7 @@ class MetricsLogger(object):
         self._metric_step_counter = {}
         """Remembers the last number of each metric."""
 
-    def log_scalar_metric(self, metric_name, value, step=None):
+    def log_scalar_metric(self, metric_name, value, duration, step=None):
         """
         Add a new measurement.
 
@@ -43,8 +43,7 @@ class MetricsLogger(object):
             step = self._metric_step_counter.get(metric_name, -1) + 1
         self._logged_metrics.put(
             ScalarMetricLogEntry(metric_name, step,
-                                 datetime.datetime.utcnow(),
-                                 value))
+                                 duration, value))
         self._metric_step_counter[metric_name] = step
 
     def get_last_metrics(self):
@@ -68,10 +67,10 @@ class ScalarMetricLogEntry():
     There is exactly one ScalarMetricLogEntry per logged scalar metric value.
     """
 
-    def __init__(self, name, step, timestamp, value):
+    def __init__(self, name, step, duration, value):
         self.name = name
         self.step = step
-        self.timestamp = timestamp
+        self.timestamp = duration
         self.value = value
 
 
@@ -85,7 +84,7 @@ def linearize_metrics(logged_metrics):
     :param logged_metrics: A list of ScalarMetricLogEntries
     :return: Measured values grouped by the metric name:
     {"metric_name1": {"steps": [0,1,2], "values": [4, 5, 6],
-    "timestamps": [datetime, datetime, datetime]},
+    "timestamps": [timedelta, timedelta, timedelta]},
     "metric_name2": {...}}
     """
     metrics_by_name = {}
