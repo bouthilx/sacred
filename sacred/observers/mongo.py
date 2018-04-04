@@ -125,7 +125,7 @@ class MongoObserver(RunObserver):
                 'captured_out': '',
                 'info': {},
                 'metrics': {}
-                }).iteritems():
+                }).items():
             self.run_entry.setdefault(key, value)
 
         self.run_entry.update({
